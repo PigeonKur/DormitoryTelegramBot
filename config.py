@@ -1,12 +1,23 @@
-from dotenv import load_dotenv
+# ────────────────────────────────────────────────────────────
+#  Все настройки берутся из файла .env в корне проекта.
+#  Никогда не коммить .env в git!
+# ────────────────────────────────────────────────────────────
 import os
+from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Telegram
+BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
 
-DB_USER = os.getenv("DB_USER")
-DB_PASS = os.getenv("DB_PASS")
-DB_NAME = os.getenv("DB_NAME")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = int(os.getenv("DB_PORT"))
+# PostgreSQL
+DB_HOST:     str = os.getenv("DB_HOST",     "localhost")
+DB_PORT:     int = int(os.getenv("DB_PORT", "5432"))
+DB_NAME:     str = os.getenv("DB_NAME",     "postgres")
+DB_USER:     str = os.getenv("DB_USER",     "postgres")
+DB_PASSWORD: str = os.getenv("DB_PASSWORD", "123")
+
+# Admins — telegram_id через запятую: 123456,789012
+ADMIN_IDS: list[int] = [
+    int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()
+]
