@@ -1,7 +1,6 @@
 import asyncpg
 from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
 
-# Глобальный пул — создаётся один раз при старте бота
 _pool: asyncpg.Pool | None = None
 
 
@@ -16,9 +15,7 @@ async def create_pool() -> asyncpg.Pool:
         password=DB_PASSWORD,
         min_size=1,
         max_size=10,
-        server_settings={
-            'search_path': 'dormitory_shop, public'
-        }
+        server_settings={"search_path": "dormitory_shop, public"},
     )
     return _pool
 

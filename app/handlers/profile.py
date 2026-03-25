@@ -2,9 +2,13 @@ import asyncpg
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from app.db.queries import (
-    get_user_stats, set_room_number, set_delivery_type,
-    get_user_orders, get_order_items,
-    get_referral_history, get_referrals_list,
+    get_user_stats,
+    set_room_number,
+    set_delivery_type,
+    get_user_orders,
+    get_order_items,
+    get_referral_history,
+    get_referrals_list,
 )
 from app.keyboards.main import profile_menu, delivery_menu, profile_referral_menu
 from app.states.cart import CartFlow
@@ -16,8 +20,6 @@ DELIVERY_LABELS = {
     "door": "🚪 Оставить у двери",
 }
 
-
-# ── Главная страница кабинета ────────────────────────────────
 
 @router.message(F.text == "👤 Личный кабинет")
 async def profile_handler(message: types.Message, pool: asyncpg.Pool):
@@ -41,15 +43,13 @@ async def profile_handler(message: types.Message, pool: asyncpg.Pool):
     await message.answer(text, reply_markup=profile_menu(), parse_mode="HTML")
 
 
-# ── Мои заказы ───────────────────────────────────────────────
-
 @router.callback_query(F.data == "profile:orders")
 async def profile_orders(callback: types.CallbackQuery, pool: asyncpg.Pool):
     orders = await get_user_orders(pool, callback.from_user.id)
     if not orders:
         await callback.message.edit_text(
             "📦 Заказов пока нет.\n\nПерейдите в 🏪 Магазин и сделайте первый заказ!",
-            reply_markup=_back_to_profile_kb()
+            reply_markup=_back_to_profile_kb(),
         )
         await callback.answer()
         return
@@ -66,20 +66,16 @@ async def profile_orders(callback: types.CallbackQuery, pool: asyncpg.Pool):
         )
 
     await callback.message.edit_text(
-        "\n".join(lines),
-        reply_markup=_back_to_profile_kb(),
-        parse_mode="HTML"
+        "\n".join(lines), reply_markup=_back_to_profile_kb(), parse_mode="HTML"
     )
     await callback.answer()
 
-
-# ── Смена типа доставки ──────────────────────────────────────
 
 @router.callback_query(F.data == "profile:delivery")
 async def profile_delivery(callback: types.CallbackQuery):
     await callback.message.edit_text(
         "🚚 Выберите тип доставки по умолчанию:",
-        reply_markup=delivery_menu(from_profile=True)
+        reply_markup=delivery_menu(from_profile=True),
     )
     await callback.answer()
 
@@ -92,20 +88,17 @@ async def delivery_chosen(callback: types.CallbackQuery, pool: asyncpg.Pool):
     await callback.message.edit_text(
         f"✅ Тип доставки изменён: <b>{label}</b>",
         reply_markup=_back_to_profile_kb(),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
     await callback.answer()
 
-
-# ── Номер комнаты ────────────────────────────────────────────
 
 @router.callback_query(F.data == "profile:room")
 async def profile_room(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(CartFlow.entering_room)
     await callback.message.edit_text(
-        "📍 Введите номер вашей комнаты:\n"
-        "<i>Например: 214 или А-305</i>",
-        parse_mode="HTML"
+        "📍 Введите номер вашей комнаты:\n" "<i>Например: 214 или А-305</i>",
+        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -122,18 +115,15 @@ async def process_room(message: types.Message, state: FSMContext, pool: asyncpg.
     await message.answer(
         f"✅ Номер комнаты сохранён: <b>{room}</b>",
         parse_mode="HTML",
-        reply_markup=profile_menu()
+        reply_markup=profile_menu(),
     )
 
-
-# ── Реферальная программа ────────────────────────────────────
 
 @router.callback_query(F.data == "profile:referral")
 async def profile_referral(callback: types.CallbackQuery, pool: asyncpg.Pool):
     user = await get_user_stats(pool, callback.from_user.id)
     ref_code = user["ref_code"] or "—"
 
-    # Формируем ссылку
     bot_info = await callback.bot.get_me()
     ref_link = f"https://t.me/{bot_info.username}?start={ref_code}"
 
@@ -161,9 +151,7 @@ async def profile_referral(callback: types.CallbackQuery, pool: asyncpg.Pool):
             lines.append(f"• +{h['amount']} ₽ от {h['referee_name']} ({date})")
 
     await callback.message.edit_text(
-        "\n".join(lines),
-        reply_markup=profile_referral_menu(),
-        parse_mode="HTML"
+        "\n".join(lines), reply_markup=profile_referral_menu(), parse_mode="HTML"
     )
     await callback.answer()
 
@@ -182,14 +170,17 @@ async def profile_back(callback: types.CallbackQuery, pool: asyncpg.Pool):
         f"👥 Приглашено друзей: <b>{user['referral_count']}</b>\n"
         f"🛍 Потрачено всего: <b>{user['total_spent']} ₽</b>"
     )
-    await callback.message.edit_text(text, reply_markup=profile_menu(), parse_mode="HTML")
+    await callback.message.edit_text(
+        text, reply_markup=profile_menu(), parse_mode="HTML"
+    )
     await callback.answer()
 
 
-# ── Вспомогательные клавиатуры ───────────────────────────────
-
 def _back_to_profile_kb():
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="profile:back")]
-    ])
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="profile:back")]
+        ]
+    )

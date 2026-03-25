@@ -2,16 +2,18 @@
 Простой in-memory кэш для каталога.
 TTL по умолчанию — 10 минут. Сбрасывается вручную после изменений в БД.
 """
+
 import time
 import asyncpg
 from app.db.queries import (
-    get_root_categories, get_subcategories, get_products, get_category
+    get_root_categories,
+    get_subcategories,
+    get_products,
+    get_category,
 )
 
-# TTL в секундах
-CACHE_TTL = 600  # 10 минут
+CACHE_TTL = 600
 
-# Хранилище: ключ → (данные, timestamp)
 _cache: dict[str, tuple] = {}
 
 
@@ -37,8 +39,6 @@ def invalidate():
     """Полный сброс кэша — вызывать после любых изменений в каталоге."""
     _cache.clear()
 
-
-# ── Публичные функции (замена прямых запросов) ───────────────
 
 async def cached_root_categories(pool: asyncpg.Pool) -> list:
     key = "root_cats"

@@ -5,24 +5,40 @@ from aiogram.fsm.context import FSMContext
 from config import ADMIN_IDS
 from app.db.cache import invalidate
 from app.db.queries import (
-    get_root_categories, get_subcategories, get_products, get_product,
-    admin_add_product, admin_edit_product_name, admin_edit_product_price,
-    admin_toggle_stock, admin_delete_product,
-    admin_add_category, admin_get_all_products, admin_get_stats,
-    get_unread_messages, get_all_messages, count_all_messages,
-    mark_message_read, mark_message_replied, get_all_user_ids,
+    get_root_categories,
+    get_subcategories,
+    get_products,
+    get_product,
+    admin_add_product,
+    admin_edit_product_name,
+    admin_edit_product_price,
+    admin_toggle_stock,
+    admin_delete_product,
+    admin_add_category,
+    admin_get_all_products,
+    admin_get_stats,
+    get_unread_messages,
+    get_all_messages,
+    count_all_messages,
+    mark_message_read,
+    mark_message_replied,
+    get_all_user_ids,
+    clear_all_messages,
 )
-from app.states.admin import AdminAddProduct, AdminEditProduct, AdminAddCategory, AdminReply, AdminBroadcast
+from app.states.admin import (
+    AdminAddProduct,
+    AdminEditProduct,
+    AdminAddCategory,
+    AdminReply,
+    AdminBroadcast,
+)
 
 router = Router()
 
-# ── Фильтр: только для админов ───────────────────────────────
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
-
-# ── Главное меню админки ─────────────────────────────────────
 
 @router.message(Command("admin"))
 async def admin_panel(message: types.Message):
@@ -32,7 +48,7 @@ async def admin_panel(message: types.Message):
     await message.answer(
         "⚙️ <b>Панель администратора</b>",
         reply_markup=_admin_main_kb(),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
 
 
@@ -44,12 +60,10 @@ async def admin_main_cb(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "⚙️ <b>Панель администратора</b>",
         reply_markup=_admin_main_kb(),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
     await callback.answer()
 
-
-# ── Статистика ───────────────────────────────────────────────
 
 @router.callback_query(F.data == "adm:stats")
 async def admin_stats(callback: types.CallbackQuery, pool: asyncpg.Pool):
@@ -67,14 +81,10 @@ async def admin_stats(callback: types.CallbackQuery, pool: asyncpg.Pool):
         f"   Выручка: <b>{s['revenue_today']} ₽</b>"
     )
     await callback.message.edit_text(
-        text,
-        reply_markup=_back_kb("adm:main"),
-        parse_mode="HTML"
+        text, reply_markup=_back_kb("adm:main"), parse_mode="HTML"
     )
     await callback.answer()
 
-
-# ── Список всех товаров ──────────────────────────────────────
 
 @router.callback_query(F.data == "adm:products")
 async def admin_products(callback: types.CallbackQuery, pool: asyncpg.Pool):
@@ -84,35 +94,44 @@ async def admin_products(callback: types.CallbackQuery, pool: asyncpg.Pool):
     products = await admin_get_all_products(pool)
     if not products:
         await callback.message.edit_text(
-            "Товаров нет.",
-            reply_markup=_back_kb("adm:main")
+            "Товаров нет.", reply_markup=_back_kb("adm:main")
         )
         await callback.answer()
         return
 
-    # Группируем по категории
     from collections import defaultdict
+
     grouped = defaultdict(list)
     for p in products:
         grouped[p["category_name"]].append(p)
 
     buttons = []
     for cat_name, items in grouped.items():
-        buttons.append([types.InlineKeyboardButton(
-            text=f"── {cat_name} ──", callback_data="adm:noop"
-        )])
+        buttons.append(
+            [
+                types.InlineKeyboardButton(
+                    text=f"── {cat_name} ──", callback_data="adm:noop"
+                )
+            ]
+        )
         for p in items:
             stock = "✅" if p["in_stock"] else "❌"
-            buttons.append([types.InlineKeyboardButton(
-                text=f"{stock} {p['name']} — {p['price']} ₽",
-                callback_data=f"adm:prod:{p['id']}"
-            )])
+            buttons.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=f"{stock} {p['name']} — {p['price']} ₽",
+                        callback_data=f"adm:prod:{p['id']}",
+                    )
+                ]
+            )
 
-    buttons.append([types.InlineKeyboardButton(text="🔙 Назад", callback_data="adm:main")])
+    buttons.append(
+        [types.InlineKeyboardButton(text="🔙 Назад", callback_data="adm:main")]
+    )
     await callback.message.edit_text(
         "📦 <b>Все товары</b>\nВыберите товар для редактирования:",
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -122,8 +141,6 @@ async def admin_noop(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# ── Карточка товара (админ) ──────────────────────────────────
-
 @router.callback_query(F.data.startswith("adm:prod:"))
 async def admin_product_card(callback: types.CallbackQuery, pool: asyncpg.Pool):
     if not is_admin(callback.from_user.id):
@@ -132,7 +149,6 @@ async def admin_product_card(callback: types.CallbackQuery, pool: asyncpg.Pool):
     product_id = int(callback.data.split(":")[2])
     p = await get_product(pool, product_id)
 
-    # get_product фильтрует in_stock=true, достаём напрямую
     p = await pool.fetchrow("SELECT * FROM products WHERE id = $1", product_id)
     if not p:
         await callback.answer("Товар не найден", show_alert=True)
@@ -145,14 +161,10 @@ async def admin_product_card(callback: types.CallbackQuery, pool: asyncpg.Pool):
         f"Статус: {stock_label}"
     )
     await callback.message.edit_text(
-        text,
-        reply_markup=_product_edit_kb(product_id),
-        parse_mode="HTML"
+        text, reply_markup=_product_edit_kb(product_id), parse_mode="HTML"
     )
     await callback.answer()
 
-
-# ── Редактирование: название ─────────────────────────────────
 
 @router.callback_query(F.data.startswith("adm:edit_name:"))
 async def admin_edit_name_start(callback: types.CallbackQuery, state: FSMContext):
@@ -164,8 +176,6 @@ async def admin_edit_name_start(callback: types.CallbackQuery, state: FSMContext
     await callback.message.edit_text("✏️ Введите новое название товара:")
     await callback.answer()
 
-
-# ── Редактирование: цена ─────────────────────────────────────
 
 @router.callback_query(F.data.startswith("adm:edit_price:"))
 async def admin_edit_price_start(callback: types.CallbackQuery, state: FSMContext):
@@ -179,7 +189,9 @@ async def admin_edit_price_start(callback: types.CallbackQuery, state: FSMContex
 
 
 @router.message(AdminEditProduct.entering_value)
-async def admin_edit_value(message: types.Message, state: FSMContext, pool: asyncpg.Pool):
+async def admin_edit_value(
+    message: types.Message, state: FSMContext, pool: asyncpg.Pool
+):
     if not is_admin(message.from_user.id):
         return
     data = await state.get_data()
@@ -202,12 +214,10 @@ async def admin_edit_value(message: types.Message, state: FSMContext, pool: asyn
         await admin_edit_product_price(pool, product_id, price)
         await message.answer(f"✅ Цена изменена: <b>{price} ₽</b>", parse_mode="HTML")
 
-    invalidate()  # сбрасываем кэш
+    invalidate()
     await state.clear()
     await message.answer("⚙️ Панель администратора", reply_markup=_admin_main_kb())
 
-
-# ── Переключить наличие ──────────────────────────────────────
 
 @router.callback_query(F.data.startswith("adm:toggle:"))
 async def admin_toggle(callback: types.CallbackQuery, pool: asyncpg.Pool):
@@ -218,11 +228,8 @@ async def admin_toggle(callback: types.CallbackQuery, pool: asyncpg.Pool):
     invalidate()
     status_text = "✅ В наличии" if new_status else "❌ Снято с продажи"
     await callback.answer(f"Статус изменён: {status_text}", show_alert=True)
-    # Обновляем карточку
     await admin_product_card(callback, pool)
 
-
-# ── Удалить товар ────────────────────────────────────────────
 
 @router.callback_query(F.data.startswith("adm:del:"))
 async def admin_delete_confirm(callback: types.CallbackQuery):
@@ -231,11 +238,21 @@ async def admin_delete_confirm(callback: types.CallbackQuery):
     product_id = int(callback.data.split(":")[2])
     await callback.message.edit_text(
         "⚠️ <b>Удалить товар?</b>\nЭто действие нельзя отменить.",
-        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"adm:del_ok:{product_id}")],
-            [types.InlineKeyboardButton(text="🔙 Отмена",      callback_data=f"adm:prod:{product_id}")],
-        ]),
-        parse_mode="HTML"
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text="🗑 Да, удалить", callback_data=f"adm:del_ok:{product_id}"
+                    )
+                ],
+                [
+                    types.InlineKeyboardButton(
+                        text="🔙 Отмена", callback_data=f"adm:prod:{product_id}"
+                    )
+                ],
+            ]
+        ),
+        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -248,43 +265,54 @@ async def admin_delete_ok(callback: types.CallbackQuery, pool: asyncpg.Pool):
     await admin_delete_product(pool, product_id)
     invalidate()
     await callback.message.edit_text(
-        "✅ Товар удалён.",
-        reply_markup=_back_kb("adm:products")
+        "✅ Товар удалён.", reply_markup=_back_kb("adm:products")
     )
     await callback.answer()
 
 
-# ── Добавить товар ───────────────────────────────────────────
-
 @router.callback_query(F.data == "adm:add_product")
-async def admin_add_product_start(callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool):
+async def admin_add_product_start(
+    callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool
+):
     if not is_admin(callback.from_user.id):
         return
 
     cats = await get_root_categories(pool)
     buttons = []
     for c in cats:
-        buttons.append([types.InlineKeyboardButton(
-            text=c["name"], callback_data=f"adm:pick_cat:{c['id']}"
-        )])
-        # Подкатегории
+        buttons.append(
+            [
+                types.InlineKeyboardButton(
+                    text=c["name"], callback_data=f"adm:pick_cat:{c['id']}"
+                )
+            ]
+        )
         subcats = await get_subcategories(pool, c["id"])
         for sc in subcats:
-            buttons.append([types.InlineKeyboardButton(
-                text=f"  ↳ {sc['name']}", callback_data=f"adm:pick_cat:{sc['id']}"
-            )])
+            buttons.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=f"  ↳ {sc['name']}",
+                        callback_data=f"adm:pick_cat:{sc['id']}",
+                    )
+                ]
+            )
 
-    buttons.append([types.InlineKeyboardButton(text="🔙 Отмена", callback_data="adm:main")])
+    buttons.append(
+        [types.InlineKeyboardButton(text="🔙 Отмена", callback_data="adm:main")]
+    )
     await state.set_state(AdminAddProduct.choosing_category)
     await callback.message.edit_text(
         "📦 <b>Добавление товара</b>\nВыберите категорию:",
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
     await callback.answer()
 
 
-@router.callback_query(AdminAddProduct.choosing_category, F.data.startswith("adm:pick_cat:"))
+@router.callback_query(
+    AdminAddProduct.choosing_category, F.data.startswith("adm:pick_cat:")
+)
 async def admin_pick_category(callback: types.CallbackQuery, state: FSMContext):
     cat_id = int(callback.data.split(":")[2])
     await state.update_data(category_id=cat_id)
@@ -303,11 +331,15 @@ async def admin_product_name(message: types.Message, state: FSMContext):
         return
     await state.update_data(name=name)
     await state.set_state(AdminAddProduct.entering_price)
-    await message.answer(f"💰 Товар: <b>{name}</b>\nВведите цену (₽):", parse_mode="HTML")
+    await message.answer(
+        f"💰 Товар: <b>{name}</b>\nВведите цену (₽):", parse_mode="HTML"
+    )
 
 
 @router.message(AdminAddProduct.entering_price)
-async def admin_product_price(message: types.Message, state: FSMContext, pool: asyncpg.Pool):
+async def admin_product_price(
+    message: types.Message, state: FSMContext, pool: asyncpg.Pool
+):
     if not is_admin(message.from_user.id):
         return
     if not message.text.strip().isdigit():
@@ -323,16 +355,28 @@ async def admin_product_price(message: types.Message, state: FSMContext, pool: a
         f"📋 <b>Проверьте данные:</b>\n\n"
         f"Название: <b>{data['name']}</b>\n"
         f"Цена: <b>{price} ₽</b>",
-        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text="✅ Сохранить", callback_data="adm:save_product")],
-            [types.InlineKeyboardButton(text="❌ Отмена",    callback_data="adm:main")],
-        ]),
-        parse_mode="HTML"
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text="✅ Сохранить", callback_data="adm:save_product"
+                    )
+                ],
+                [
+                    types.InlineKeyboardButton(
+                        text="❌ Отмена", callback_data="adm:main"
+                    )
+                ],
+            ]
+        ),
+        parse_mode="HTML",
     )
 
 
 @router.callback_query(AdminAddProduct.confirming, F.data == "adm:save_product")
-async def admin_save_product(callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool):
+async def admin_save_product(
+    callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool
+):
     if not is_admin(callback.from_user.id):
         return
     data = await state.get_data()
@@ -344,12 +388,10 @@ async def admin_save_product(callback: types.CallbackQuery, state: FSMContext, p
     await callback.message.edit_text(
         f"✅ Товар <b>{data['name']}</b> добавлен (ID: {product_id})",
         reply_markup=_admin_main_kb(),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
     await callback.answer()
 
-
-# ── Добавить категорию ───────────────────────────────────────
 
 @router.callback_query(F.data == "adm:add_category")
 async def admin_add_cat_start(callback: types.CallbackQuery, state: FSMContext):
@@ -369,22 +411,35 @@ async def admin_cat_name(message: types.Message, state: FSMContext, pool: asyncp
     await state.set_state(AdminAddCategory.choosing_parent)
 
     cats = await get_root_categories(pool)
-    buttons = [[types.InlineKeyboardButton(
-        text="🚫 Без родителя (верхний уровень)", callback_data="adm:cat_parent:0"
-    )]]
+    buttons = [
+        [
+            types.InlineKeyboardButton(
+                text="🚫 Без родителя (верхний уровень)",
+                callback_data="adm:cat_parent:0",
+            )
+        ]
+    ]
     for c in cats:
-        buttons.append([types.InlineKeyboardButton(
-            text=c["name"], callback_data=f"adm:cat_parent:{c['id']}"
-        )])
+        buttons.append(
+            [
+                types.InlineKeyboardButton(
+                    text=c["name"], callback_data=f"adm:cat_parent:{c['id']}"
+                )
+            ]
+        )
     await message.answer(
         f"Категория: <b>{name}</b>\nВыберите родителя:",
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
 
 
-@router.callback_query(AdminAddCategory.choosing_parent, F.data.startswith("adm:cat_parent:"))
-async def admin_cat_parent(callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool):
+@router.callback_query(
+    AdminAddCategory.choosing_parent, F.data.startswith("adm:cat_parent:")
+)
+async def admin_cat_parent(
+    callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool
+):
     if not is_admin(callback.from_user.id):
         return
     parent_id_raw = int(callback.data.split(":")[2])
@@ -397,15 +452,13 @@ async def admin_cat_parent(callback: types.CallbackQuery, state: FSMContext, poo
     await callback.message.edit_text(
         f"✅ Категория <b>{data['name']}</b> добавлена (ID: {cat_id})",
         reply_markup=_admin_main_kb(),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
     await callback.answer()
 
 
-
-# ── Сообщения пользователей ──────────────────────────────────
-
 MSGS_PER_PAGE = 5
+
 
 @router.callback_query(F.data.startswith("adm:messages:"))
 async def admin_messages(callback: types.CallbackQuery, pool: asyncpg.Pool):
@@ -421,8 +474,7 @@ async def admin_messages(callback: types.CallbackQuery, pool: asyncpg.Pool):
 
     if not messages:
         await callback.message.edit_text(
-            "📨 Сообщений нет.",
-            reply_markup=_back_kb("adm:main")
+            "📨 Сообщений нет.", reply_markup=_back_kb("adm:main")
         )
         await callback.answer()
         return
@@ -433,28 +485,48 @@ async def admin_messages(callback: types.CallbackQuery, pool: asyncpg.Pool):
         uname = f"@{m['username']}" if m["username"] else m["full_name"]
         date = m["created_at"].strftime("%d.%m %H:%M")
         short = m["text"][:30] + ("…" if len(m["text"]) > 30 else "")
-        buttons.append([types.InlineKeyboardButton(
-            text=f"{status} {uname} ({date}): {short}",
-            callback_data=f"adm:msg:{m['id']}"
-        )])
+        buttons.append(
+            [
+                types.InlineKeyboardButton(
+                    text=f"{status} {uname} ({date}): {short}",
+                    callback_data=f"adm:msg:{m['id']}",
+                )
+            ]
+        )
 
-    # Пагинация
     nav = []
     if page > 0:
-        nav.append(types.InlineKeyboardButton(text="◀️", callback_data=f"adm:messages:{page-1}"))
+        nav.append(
+            types.InlineKeyboardButton(text="◀️", callback_data=f"adm:messages:{page-1}")
+        )
     total_pages = max(1, (total - 1) // MSGS_PER_PAGE + 1)
-    nav.append(types.InlineKeyboardButton(text=f"{page+1}/{total_pages}", callback_data="adm:noop"))
+    nav.append(
+        types.InlineKeyboardButton(
+            text=f"{page+1}/{total_pages}", callback_data="adm:noop"
+        )
+    )
     if offset + MSGS_PER_PAGE < total:
-        nav.append(types.InlineKeyboardButton(text="▶️", callback_data=f"adm:messages:{page+1}"))
+        nav.append(
+            types.InlineKeyboardButton(text="▶️", callback_data=f"adm:messages:{page+1}")
+        )
     if nav:
         buttons.append(nav)
-    buttons.append([types.InlineKeyboardButton(text="🔙 Назад", callback_data="adm:main")])
+    buttons.append(
+        [
+            types.InlineKeyboardButton(
+                text="🗑 Очистить все", callback_data="adm:messages_clear_confirm"
+            )
+        ]
+    )
+    buttons.append(
+        [types.InlineKeyboardButton(text="🔙 Назад", callback_data="adm:main")]
+    )
 
     unread_label = f" (🆕 {unread_count} непрочитанных)" if unread_count else ""
     await callback.message.edit_text(
         f"📨 <b>Сообщения{unread_label}</b>",
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -465,12 +537,15 @@ async def admin_view_message(callback: types.CallbackQuery, pool: asyncpg.Pool):
         return
 
     msg_id = int(callback.data.split(":")[2])
-    rows = await pool.fetch("""
+    rows = await pool.fetch(
+        """
         SELECT um.*, u.full_name, u.username, u.id AS user_id
         FROM user_messages um
         JOIN users u ON u.id = um.user_id
         WHERE um.id = $1
-    """, msg_id)
+    """,
+        msg_id,
+    )
 
     if not rows:
         await callback.answer("Сообщение не найдено", show_alert=True)
@@ -481,7 +556,11 @@ async def admin_view_message(callback: types.CallbackQuery, pool: asyncpg.Pool):
 
     uname = f"@{m['username']}" if m["username"] else m["full_name"]
     date = m["created_at"].strftime("%d.%m.%Y %H:%M")
-    replied = f"\n↩️ Отвечено: {m['replied_at'].strftime('%d.%m %H:%M')}" if m["replied_at"] else ""
+    replied = (
+        f"\n↩️ Отвечено: {m['replied_at'].strftime('%d.%m %H:%M')}"
+        if m["replied_at"]
+        else ""
+    )
 
     text = (
         f"📨 <b>Сообщение #{m['id']}</b>\n\n"
@@ -491,14 +570,22 @@ async def admin_view_message(callback: types.CallbackQuery, pool: asyncpg.Pool):
     )
     await callback.message.edit_text(
         text,
-        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(
-                text="↩️ Ответить",
-                callback_data=f"adm:reply:{m['id']}:{m['user_id']}"
-            )],
-            [types.InlineKeyboardButton(text="🔙 Назад", callback_data="adm:messages:0")],
-        ]),
-        parse_mode="HTML"
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text="↩️ Ответить",
+                        callback_data=f"adm:reply:{m['id']}:{m['user_id']}",
+                    )
+                ],
+                [
+                    types.InlineKeyboardButton(
+                        text="🔙 Назад", callback_data="adm:messages:0"
+                    )
+                ],
+            ]
+        ),
+        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -516,31 +603,68 @@ async def admin_reply_start(callback: types.CallbackQuery, state: FSMContext):
 
 
 @router.message(AdminReply.entering_text)
-async def admin_reply_send(message: types.Message, state: FSMContext, pool: asyncpg.Pool):
+async def admin_reply_send(
+    message: types.Message, state: FSMContext, pool: asyncpg.Pool
+):
     if not is_admin(message.from_user.id):
         return
     data = await state.get_data()
     user_id = data["user_id"]
-    msg_id  = data["msg_id"]
+    msg_id = data["msg_id"]
 
     try:
         await message.bot.send_message(
             user_id,
             f"📨 <b>Ответ от администратора:</b>\n\n{message.text}",
-            parse_mode="HTML"
+            parse_mode="HTML",
         )
         await mark_message_replied(pool, msg_id)
-        await message.answer(
-            "✅ Ответ отправлен.",
-            reply_markup=_admin_main_kb()
-        )
+        await message.answer("✅ Ответ отправлен.", reply_markup=_admin_main_kb())
     except Exception as e:
-        await message.answer(f"❌ Не удалось отправить: {e}", reply_markup=_admin_main_kb())
+        await message.answer(
+            f"❌ Не удалось отправить: {e}", reply_markup=_admin_main_kb()
+        )
 
     await state.clear()
 
 
-# ── Рассылка ─────────────────────────────────────────────────
+@router.callback_query(F.data == "adm:messages_clear_confirm")
+async def admin_messages_clear_confirm(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    await callback.message.edit_text(
+        "⚠️ <b>Удалить все сообщения?</b>\n\nЭто действие нельзя отменить.",
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text="🗑 Да, удалить все", callback_data="adm:messages_clear_ok"
+                    )
+                ],
+                [
+                    types.InlineKeyboardButton(
+                        text="🔙 Отмена", callback_data="adm:messages:0"
+                    )
+                ],
+            ]
+        ),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "adm:messages_clear_ok")
+async def admin_messages_clear_ok(callback: types.CallbackQuery, pool: asyncpg.Pool):
+    if not is_admin(callback.from_user.id):
+        return
+    deleted = await clear_all_messages(pool)
+    await callback.message.edit_text(
+        f"✅ Удалено <b>{deleted}</b> сообщений.",
+        reply_markup=_back_kb("adm:main"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
 
 @router.callback_query(F.data == "adm:broadcast")
 async def admin_broadcast_start(callback: types.CallbackQuery, state: FSMContext):
@@ -551,7 +675,7 @@ async def admin_broadcast_start(callback: types.CallbackQuery, state: FSMContext
         "📢 <b>Рассылка</b>\n\n"
         "Введите текст сообщения.\n"
         "<i>Поддерживается HTML-разметка: <b>жирный</b>, <i>курсив</i>, <code>моноширинный</code></i>",
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -562,18 +686,29 @@ async def admin_broadcast_preview(message: types.Message, state: FSMContext):
         return
     await state.update_data(text=message.text)
     await message.answer(
-        f"<b>Предпросмотр:</b>\n\n{message.text}\n\n"
-        f"Отправить всем пользователям?",
-        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text="📢 Отправить",  callback_data="adm:broadcast_ok")],
-            [types.InlineKeyboardButton(text="❌ Отмена",     callback_data="adm:main")],
-        ]),
-        parse_mode="HTML"
+        f"<b>Предпросмотр:</b>\n\n{message.text}\n\n" f"Отправить всем пользователям?",
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text="📢 Отправить", callback_data="adm:broadcast_ok"
+                    )
+                ],
+                [
+                    types.InlineKeyboardButton(
+                        text="❌ Отмена", callback_data="adm:main"
+                    )
+                ],
+            ]
+        ),
+        parse_mode="HTML",
     )
 
 
 @router.callback_query(AdminBroadcast.entering_text, F.data == "adm:broadcast_ok")
-async def admin_broadcast_send(callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool):
+async def admin_broadcast_send(
+    callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool
+):
     if not is_admin(callback.from_user.id):
         return
     data = await state.get_data()
@@ -596,35 +731,79 @@ async def admin_broadcast_send(callback: types.CallbackQuery, state: FSMContext,
         f"📤 Отправлено: <b>{sent}</b>\n"
         f"❌ Ошибок: <b>{failed}</b>",
         reply_markup=_back_kb("adm:main"),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
     await callback.answer()
 
 
-# ── Клавиатуры ───────────────────────────────────────────────
-
 def _admin_main_kb() -> types.InlineKeyboardMarkup:
-    return types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="📊 Статистика",      callback_data="adm:stats")],
-        [types.InlineKeyboardButton(text="📦 Все товары",      callback_data="adm:products")],
-        [types.InlineKeyboardButton(text="➕ Добавить товар",   callback_data="adm:add_product")],
-        [types.InlineKeyboardButton(text="🗂 Добавить категорию", callback_data="adm:add_category")],
-        [types.InlineKeyboardButton(text="📨 Сообщения",          callback_data="adm:messages:0")],
-        [types.InlineKeyboardButton(text="📢 Рассылка",            callback_data="adm:broadcast")],
-    ])
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="📊 Статистика", callback_data="adm:stats"
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="📦 Все товары", callback_data="adm:products"
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="➕ Добавить товар", callback_data="adm:add_product"
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🗂 Добавить категорию", callback_data="adm:add_category"
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="📨 Сообщения", callback_data="adm:messages:0"
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="📢 Рассылка", callback_data="adm:broadcast"
+                )
+            ],
+        ]
+    )
 
 
 def _product_edit_kb(product_id: int) -> types.InlineKeyboardMarkup:
-    return types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="✏️ Название",        callback_data=f"adm:edit_name:{product_id}")],
-        [types.InlineKeyboardButton(text="💰 Цена",            callback_data=f"adm:edit_price:{product_id}")],
-        [types.InlineKeyboardButton(text="🔄 Наличие",         callback_data=f"adm:toggle:{product_id}")],
-        [types.InlineKeyboardButton(text="🗑 Удалить",         callback_data=f"adm:del:{product_id}")],
-        [types.InlineKeyboardButton(text="🔙 Назад",           callback_data="adm:products")],
-    ])
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="✏️ Название", callback_data=f"adm:edit_name:{product_id}"
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="💰 Цена", callback_data=f"adm:edit_price:{product_id}"
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🔄 Наличие", callback_data=f"adm:toggle:{product_id}"
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🗑 Удалить", callback_data=f"adm:del:{product_id}"
+                )
+            ],
+            [types.InlineKeyboardButton(text="🔙 Назад", callback_data="adm:products")],
+        ]
+    )
 
 
 def _back_kb(callback_data: str) -> types.InlineKeyboardMarkup:
-    return types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="🔙 Назад", callback_data=callback_data)]
-    ])
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text="🔙 Назад", callback_data=callback_data)]
+        ]
+    )

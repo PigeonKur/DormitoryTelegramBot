@@ -3,9 +3,17 @@ from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from app.keyboards.main import cart_menu, delivery_menu, order_confirm_menu
 from app.db.queries import (
-    get_product, get_user, set_delivery_type, update_order_status,
-    cart_add_item, cart_get_items, cart_change_qty, cart_delete_item,
-    cart_clear, create_order, process_referral_reward,
+    get_product,
+    get_user,
+    set_delivery_type,
+    update_order_status,
+    cart_add_item,
+    cart_get_items,
+    cart_change_qty,
+    cart_delete_item,
+    cart_clear,
+    create_order,
+    process_referral_reward,
 )
 from app.db.cache import cached_root_categories, cached_category, cached_products
 from app.states.cart import CartFlow
@@ -17,8 +25,6 @@ DELIVERY_LABELS = {
     "door": "🚪 Оставить у двери",
 }
 
-
-# ── Вспомогательные функции ──────────────────────────────────
 
 async def format_cart_text(user_id: int, pool: asyncpg.Pool) -> tuple[str, int]:
     """Возвращает (текст корзины, итоговая сумма)."""
@@ -40,8 +46,6 @@ async def format_cart_text(user_id: int, pool: asyncpg.Pool) -> tuple[str, int]:
     return "\n".join(lines), total
 
 
-# ── Добавить в корзину ───────────────────────────────────────
-
 @router.callback_query(F.data.startswith("add:"))
 async def add_to_cart(callback: types.CallbackQuery, pool: asyncpg.Pool):
     parts = callback.data.split(":")
@@ -56,24 +60,21 @@ async def add_to_cart(callback: types.CallbackQuery, pool: asyncpg.Pool):
     qty = await cart_add_item(pool, callback.from_user.id, product_id)
     await callback.answer(f"✅ «{item['name']}» в корзине (×{qty})")
 
-    # После добавления всегда возвращаемся в главный каталог
     from app.keyboards.main import catalog_menu
+
     cats = await cached_root_categories(pool)
     await callback.message.edit_text(
-        "🏪 Выберите категорию:",
-        reply_markup=catalog_menu(cats)
+        "🏪 Выберите категорию:", reply_markup=catalog_menu(cats)
     )
 
-
-# ── Просмотр корзины ─────────────────────────────────────────
 
 @router.message(F.text == "🛒 Корзина")
 async def view_cart(message: types.Message, pool: asyncpg.Pool):
     text, total = await format_cart_text(message.from_user.id, pool)
-    await message.answer(text, reply_markup=cart_menu(has_items=total > 0), parse_mode="HTML")
+    await message.answer(
+        text, reply_markup=cart_menu(has_items=total > 0), parse_mode="HTML"
+    )
 
-
-# ── Изменить количество ──────────────────────────────────────
 
 @router.callback_query(F.data.startswith("qty:"))
 async def change_qty(callback: types.CallbackQuery, pool: asyncpg.Pool):
@@ -90,29 +91,24 @@ async def change_qty(callback: types.CallbackQuery, pool: asyncpg.Pool):
 
     text, total = await format_cart_text(user_id, pool)
     await callback.message.edit_text(
-        text,
-        reply_markup=cart_menu(has_items=total > 0),
-        parse_mode="HTML"
+        text, reply_markup=cart_menu(has_items=total > 0), parse_mode="HTML"
     )
     await callback.answer()
 
-
-# ── Очистить корзину ─────────────────────────────────────────
 
 @router.callback_query(F.data == "cart:clear")
 async def clear_cart(callback: types.CallbackQuery, pool: asyncpg.Pool):
     await cart_clear(pool, callback.from_user.id)
     await callback.message.edit_text(
-        "🗑 Корзина очищена.",
-        reply_markup=cart_menu(has_items=False)
+        "🗑 Корзина очищена.", reply_markup=cart_menu(has_items=False)
     )
     await callback.answer()
 
 
-# ── Оформление: шаг 1 — доставка ────────────────────────────
-
 @router.callback_query(F.data == "cart:checkout")
-async def checkout_start(callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool):
+async def checkout_start(
+    callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool
+):
     rows = await cart_get_items(pool, callback.from_user.id)
     if not rows:
         await callback.answer("Корзина пуста!", show_alert=True)
@@ -129,33 +125,31 @@ async def checkout_start(callback: types.CallbackQuery, state: FSMContext, pool:
             "🚚 Как вам доставить заказ?\n\n"
             "<i>Настройка сохранится. Изменить можно в 👤 Личном кабинете.</i>",
             reply_markup=delivery_menu(),
-            parse_mode="HTML"
+            parse_mode="HTML",
         )
     await callback.answer()
 
 
 @router.callback_query(CartFlow.choosing_delivery, F.data.startswith("delivery:"))
-async def delivery_chosen(callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool):
+async def delivery_chosen(
+    callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool
+):
     delivery_type = callback.data.split(":")[1]
     await set_delivery_type(pool, callback.from_user.id, delivery_type)
     await _show_order_summary(callback, state, pool, delivery_type)
     await callback.answer()
 
 
-# Смена доставки из профиля (без активного состояния)
 @router.callback_query(F.data.startswith("delivery:"))
 async def delivery_from_profile(callback: types.CallbackQuery, pool: asyncpg.Pool):
     delivery_type = callback.data.split(":")[1]
     await set_delivery_type(pool, callback.from_user.id, delivery_type)
     label = DELIVERY_LABELS.get(delivery_type, delivery_type)
     await callback.message.edit_text(
-        f"✅ Тип доставки изменён: <b>{label}</b>",
-        parse_mode="HTML"
+        f"✅ Тип доставки изменён: <b>{label}</b>", parse_mode="HTML"
     )
     await callback.answer()
 
-
-# ── Оформление: шаг 2 — итоговая форма ──────────────────────
 
 async def _show_order_summary(
     callback: types.CallbackQuery,
@@ -177,38 +171,37 @@ async def _show_order_summary(
     )
     await state.update_data(delivery_type=delivery_type)
     await state.set_state(CartFlow.reviewing)
-    await callback.message.edit_text(text, reply_markup=order_confirm_menu(), parse_mode="HTML")
+    await callback.message.edit_text(
+        text, reply_markup=order_confirm_menu(), parse_mode="HTML"
+    )
 
-
-# ── Оформление: изменить доставку ───────────────────────────
 
 @router.callback_query(CartFlow.reviewing, F.data == "order:change_delivery")
 async def change_delivery(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(CartFlow.choosing_delivery)
     await callback.message.edit_text(
-        "🚚 Выберите новый способ доставки:",
-        reply_markup=delivery_menu()
+        "🚚 Выберите новый способ доставки:", reply_markup=delivery_menu()
     )
     await callback.answer()
 
 
-# ── Оформление: отмена ───────────────────────────────────────
-
 @router.callback_query(CartFlow.reviewing, F.data == "order:cancel")
-async def cancel_order(callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool):
+async def cancel_order(
+    callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool
+):
     await state.set_state(None)
     rows = await cart_get_items(pool, callback.from_user.id)
     await callback.message.edit_text(
         "❌ Заказ отменён. Корзина сохранена.",
-        reply_markup=cart_menu(has_items=bool(rows))
+        reply_markup=cart_menu(has_items=bool(rows)),
     )
     await callback.answer()
 
 
-# ── Оформление: оплата (заглушка) ────────────────────────────
-
 @router.callback_query(CartFlow.reviewing, F.data == "order:pay")
-async def pay_order(callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool):
+async def pay_order(
+    callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool
+):
     user_id = callback.from_user.id
     rows = await cart_get_items(pool, user_id)
     data = await state.get_data()
@@ -218,7 +211,6 @@ async def pay_order(callback: types.CallbackQuery, state: FSMContext, pool: asyn
         await callback.answer("Корзина пуста!", show_alert=True)
         return
 
-    # Собираем позиции только из товаров в наличии
     items = []
     total = 0
     for r in rows:
@@ -226,14 +218,15 @@ async def pay_order(callback: types.CallbackQuery, state: FSMContext, pool: asyn
             continue
         subtotal = r["price"] * r["quantity"]
         total += subtotal
-        items.append({
-            "product_id": r["product_id"],
-            "name":       r["name"],
-            "price":      r["price"],
-            "quantity":   r["quantity"],
-        })
+        items.append(
+            {
+                "product_id": r["product_id"],
+                "name": r["name"],
+                "price": r["price"],
+                "quantity": r["quantity"],
+            }
+        )
 
-    # Создаём заказ в БД
     order_id = await create_order(
         pool=pool,
         user_id=user_id,
@@ -243,7 +236,6 @@ async def pay_order(callback: types.CallbackQuery, state: FSMContext, pool: asyn
     )
     await update_order_status(pool, order_id, "paid")
 
-    # Реферальное начисление
     referrer_id = await process_referral_reward(
         pool=pool,
         referee_id=user_id,
@@ -257,12 +249,11 @@ async def pay_order(callback: types.CallbackQuery, state: FSMContext, pool: asyn
                 referrer_id,
                 f"💰 Вам начислено <b>{bonus} ₽</b> бонусами — "
                 f"ваш реферал сделал заказ на {total} ₽!",
-                parse_mode="HTML"
+                parse_mode="HTML",
             )
         except Exception:
             pass
 
-    # Очищаем корзину в БД и сбрасываем состояние
     await cart_clear(pool, user_id)
     await state.set_state(None)
 
@@ -273,6 +264,6 @@ async def pay_order(callback: types.CallbackQuery, state: FSMContext, pool: asyn
         f"📦 Доставка: <b>{label}</b>\n\n"
         f"💳 <i>Интеграция оплаты будет добавлена позже.</i>\n\n"
         f"Спасибо за заказ! Ожидайте 🙌",
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
     await callback.answer("Заказ оформлен!", show_alert=True)

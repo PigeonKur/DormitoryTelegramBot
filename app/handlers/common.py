@@ -2,12 +2,17 @@ import asyncpg
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from app.keyboards.main import (
-    catalog_menu, subcategory_or_items_menu, items_menu, item_card_menu
+    catalog_menu,
+    subcategory_or_items_menu,
+    items_menu,
+    item_card_menu,
 )
 from app.db.queries import get_product
 from app.db.cache import (
-    cached_root_categories, cached_subcategories,
-    cached_products, cached_category
+    cached_root_categories,
+    cached_subcategories,
+    cached_products,
+    cached_category,
 )
 
 router = Router()
@@ -18,20 +23,18 @@ DELIVERY_LABELS = {
 }
 
 
-# ── Магазин ─────────────────────────────────────────────────
-
 @router.message(F.text == "🏪 Магазин")
 async def shop_handler(message: types.Message, pool: asyncpg.Pool):
     cats = await cached_root_categories(pool)
     await message.answer("🏪 Выберите категорию:", reply_markup=catalog_menu(cats))
 
 
-# ── Навигация по каталогу ────────────────────────────────────
-
 @router.callback_query(F.data == "to_catalog")
 async def to_catalog(callback: types.CallbackQuery, pool: asyncpg.Pool):
     cats = await cached_root_categories(pool)
-    await callback.message.edit_text("🏪 Выберите категорию:", reply_markup=catalog_menu(cats))
+    await callback.message.edit_text(
+        "🏪 Выберите категорию:", reply_markup=catalog_menu(cats)
+    )
     await callback.answer()
 
 
@@ -45,18 +48,15 @@ async def category_callback(callback: types.CallbackQuery, pool: asyncpg.Pool):
 
     subcats = await cached_subcategories(pool, cat_id)
     if subcats:
-        # Есть подкатегории — показываем их
         kb = await subcategory_or_items_menu(pool, cat_id, parent_back="to_catalog")
         await callback.message.edit_text(
-            f"{cat['name']}\n\nВыберите подкатегорию:",
-            reply_markup=kb
+            f"{cat['name']}\n\nВыберите подкатегорию:", reply_markup=kb
         )
     else:
-        # Нет подкатегорий — сразу товары
         products = await cached_products(pool, cat_id)
         await callback.message.edit_text(
             f"{cat['name']}\n\nВыберите товар:",
-            reply_markup=items_menu(products, back_callback="to_catalog")
+            reply_markup=items_menu(products, back_callback="to_catalog"),
         )
     await callback.answer()
 
@@ -73,16 +73,14 @@ async def subcategory_callback(callback: types.CallbackQuery, pool: asyncpg.Pool
     products = await cached_products(pool, sub_id)
     await callback.message.edit_text(
         f"{sub['name']}\n\nВыберите товар:",
-        reply_markup=items_menu(products, back_callback=f"cat:{cat_id_str}")
+        reply_markup=items_menu(products, back_callback=f"cat:{cat_id_str}"),
     )
     await callback.answer()
 
 
-# ── Карточка товара ──────────────────────────────────────────
-
 @router.callback_query(F.data.startswith("item:"))
 async def item_callback(callback: types.CallbackQuery, pool: asyncpg.Pool):
-    parts = callback.data.split(":")   # item:<product_id>:<back_callback>
+    parts = callback.data.split(":")  # item:<product_id>:<back_callback>
     product_id = int(parts[1])
     back_cb = ":".join(parts[2:]) if len(parts) > 2 else "to_catalog"
 
@@ -97,8 +95,6 @@ async def item_callback(callback: types.CallbackQuery, pool: asyncpg.Pool):
         f"Добавить товар в корзину?"
     )
     await callback.message.edit_text(
-        text,
-        reply_markup=item_card_menu(product_id, back_cb),
-        parse_mode="HTML"
+        text, reply_markup=item_card_menu(product_id, back_cb), parse_mode="HTML"
     )
     await callback.answer()

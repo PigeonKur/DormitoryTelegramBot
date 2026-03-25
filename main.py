@@ -16,17 +16,13 @@ log = logging.getLogger(__name__)
 
 
 async def main():
-    # ── БД ──────────────────────────────────────────────────
     log.info("Подключаемся к базе данных...")
     pool = await create_pool()
     log.info("✅ Пул соединений создан")
 
-    # ── Бот и диспетчер ─────────────────────────────────────
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
 
-    # Прокидываем pool во все хендлеры через workflow_data
-    # После этого любой хендлер может принять аргумент pool: asyncpg.Pool
     dp.workflow_data["pool"] = pool
 
     dp.message.middleware(AntispamMiddleware())
@@ -37,7 +33,7 @@ async def main():
     dp.include_router(cart.router)
     dp.include_router(profile.router)
     dp.include_router(admin.router)
-    dp.include_router(search.router)  # search последним — ловит все неизвестные сообщения
+    dp.include_router(search.router)
 
     log.info("✅ Бот запущен")
     try:

@@ -2,13 +2,15 @@
 Антиспам middleware.
 Не более MAX_CALLS действий за PERIOD секунд на пользователя.
 """
+
 import time
 from collections import defaultdict
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, Message, CallbackQuery
 
 MAX_CALLS = 8
-PERIOD    = 3.0
+PERIOD = 3.0
+
 
 class AntispamMiddleware(BaseMiddleware):
     def __init__(self):
@@ -27,7 +29,9 @@ class AntispamMiddleware(BaseMiddleware):
 
         if len(self._history[user_id]) >= MAX_CALLS:
             if isinstance(event, CallbackQuery):
-                await event.answer("⏳ Не так быстро! Подождите секунду.", show_alert=False)
+                await event.answer(
+                    "⏳ Не так быстро! Подождите секунду.", show_alert=False
+                )
             elif isinstance(event, Message):
                 await event.answer("⏳ Не так быстро! Подождите секунду.")
             return
