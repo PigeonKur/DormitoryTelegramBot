@@ -5,9 +5,10 @@ from app.keyboards.main import (
     catalog_menu, subcategory_or_items_menu, items_menu,
     item_card_menu, profile_menu
 )
-from app.db.queries import (
-    get_root_categories, get_subcategories, get_category,
-    get_products, get_product, get_user, get_user_orders
+from app.db.queries import get_product, get_user, get_user_orders
+from app.db.cache import (
+    cached_root_categories, cached_subcategories,
+    cached_products, cached_category
 )
 
 router = Router()
@@ -22,7 +23,7 @@ DELIVERY_LABELS = {
 
 @router.message(F.text == "🏪 Магазин")
 async def shop_handler(message: types.Message, pool: asyncpg.Pool):
-    cats = await get_root_categories(pool)
+    cats = await cached_root_categories(pool)
     await message.answer("🏪 Выберите категорию:", reply_markup=catalog_menu(cats))
 
 
@@ -80,7 +81,7 @@ async def profile_callback(callback: types.CallbackQuery, pool: asyncpg.Pool):
 
 @router.callback_query(F.data == "to_catalog")
 async def to_catalog(callback: types.CallbackQuery, pool: asyncpg.Pool):
-    cats = await get_root_categories(pool)
+    cats = await cached_root_categories(pool)
     await callback.message.edit_text("🏪 Выберите категорию:", reply_markup=catalog_menu(cats))
     await callback.answer()
 
@@ -88,12 +89,12 @@ async def to_catalog(callback: types.CallbackQuery, pool: asyncpg.Pool):
 @router.callback_query(F.data.startswith("cat:"))
 async def category_callback(callback: types.CallbackQuery, pool: asyncpg.Pool):
     cat_id = int(callback.data.split(":")[1])
-    cat = await get_category(pool, cat_id)
+    cat = await cached_category(pool, cat_id)
     if not cat:
         await callback.answer("Категория не найдена", show_alert=True)
         return
 
-    subcats = await get_subcategories(pool, cat_id)
+    subcats = await cached_subcategories(pool, cat_id)
     if subcats:
         # Есть подкатегории — показываем их
         kb = await subcategory_or_items_menu(pool, cat_id, parent_back="to_catalog")
@@ -103,7 +104,7 @@ async def category_callback(callback: types.CallbackQuery, pool: asyncpg.Pool):
         )
     else:
         # Нет подкатегорий — сразу товары
-        products = await get_products(pool, cat_id)
+        products = await cached_products(pool, cat_id)
         await callback.message.edit_text(
             f"{cat['name']}\n\nВыберите товар:",
             reply_markup=items_menu(products, back_callback="to_catalog")
@@ -115,12 +116,12 @@ async def category_callback(callback: types.CallbackQuery, pool: asyncpg.Pool):
 async def subcategory_callback(callback: types.CallbackQuery, pool: asyncpg.Pool):
     _, cat_id_str, sub_id_str = callback.data.split(":")
     sub_id = int(sub_id_str)
-    sub = await get_category(pool, sub_id)
+    sub = await cached_category(pool, sub_id)
     if not sub:
         await callback.answer("Подкатегория не найдена", show_alert=True)
         return
 
-    products = await get_products(pool, sub_id)
+    products = await cached_products(pool, sub_id)
     await callback.message.edit_text(
         f"{sub['name']}\n\nВыберите товар:",
         reply_markup=items_menu(products, back_callback=f"cat:{cat_id_str}")
@@ -134,7 +135,7 @@ async def subcategory_callback(callback: types.CallbackQuery, pool: asyncpg.Pool
 async def item_callback(callback: types.CallbackQuery, pool: asyncpg.Pool):
     parts = callback.data.split(":")   # item:<product_id>:<back_callback>
     product_id = int(parts[1])
-    back_cb = parts[2] if len(parts) > 2 else "to_catalog"
+    back_cb = ":".join(parts[2:]) if len(parts) > 2 else "to_catalog"
 
     item = await get_product(pool, product_id)
     if not item:

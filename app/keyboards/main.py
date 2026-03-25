@@ -3,7 +3,7 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton,
 )
-from app.db.queries import get_subcategories, get_products, get_category
+from app.db.cache import cached_subcategories, cached_products
 
 
 # ── Reply-клавиатура ─────────────────────────────────────────
@@ -38,7 +38,7 @@ async def subcategory_or_items_menu(
     parent_back: str,
 ) -> InlineKeyboardMarkup:
     """Если есть подкатегории — показывает их, иначе товары."""
-    subcats = await get_subcategories(pool, cat_id)
+    subcats = await cached_subcategories(pool, cat_id)
     if subcats:
         buttons = [
             [InlineKeyboardButton(
@@ -51,7 +51,7 @@ async def subcategory_or_items_menu(
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     # Нет подкатегорий — товары
-    products = await get_products(pool, cat_id)
+    products = await cached_products(pool, cat_id)
     return items_menu(products, back_callback=parent_back)
 
 
