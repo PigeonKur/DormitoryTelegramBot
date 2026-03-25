@@ -9,8 +9,10 @@ from app.db.queries import (
     admin_add_product, admin_edit_product_name, admin_edit_product_price,
     admin_toggle_stock, admin_delete_product,
     admin_add_category, admin_get_all_products, admin_get_stats,
+    get_unread_messages, get_all_messages, count_all_messages,
+    mark_message_read, mark_message_replied, get_all_user_ids,
 )
-from app.states.admin import AdminAddProduct, AdminEditProduct, AdminAddCategory
+from app.states.admin import AdminAddProduct, AdminEditProduct, AdminAddCategory, AdminReply, AdminBroadcast
 
 router = Router()
 
@@ -400,6 +402,205 @@ async def admin_cat_parent(callback: types.CallbackQuery, state: FSMContext, poo
     await callback.answer()
 
 
+
+# ── Сообщения пользователей ──────────────────────────────────
+
+MSGS_PER_PAGE = 5
+
+@router.callback_query(F.data.startswith("adm:messages:"))
+async def admin_messages(callback: types.CallbackQuery, pool: asyncpg.Pool):
+    if not is_admin(callback.from_user.id):
+        return
+
+    page = int(callback.data.split(":")[2])
+    offset = page * MSGS_PER_PAGE
+    messages = await get_all_messages(pool, offset=offset, limit=MSGS_PER_PAGE)
+    total = await count_all_messages(pool)
+    unread = await get_unread_messages(pool)
+    unread_count = len(unread)
+
+    if not messages:
+        await callback.message.edit_text(
+            "📨 Сообщений нет.",
+            reply_markup=_back_kb("adm:main")
+        )
+        await callback.answer()
+        return
+
+    buttons = []
+    for m in messages:
+        status = "🆕" if not m["is_read"] else ("↩️" if m["replied_at"] else "✅")
+        uname = f"@{m['username']}" if m["username"] else m["full_name"]
+        date = m["created_at"].strftime("%d.%m %H:%M")
+        short = m["text"][:30] + ("…" if len(m["text"]) > 30 else "")
+        buttons.append([types.InlineKeyboardButton(
+            text=f"{status} {uname} ({date}): {short}",
+            callback_data=f"adm:msg:{m['id']}"
+        )])
+
+    # Пагинация
+    nav = []
+    if page > 0:
+        nav.append(types.InlineKeyboardButton(text="◀️", callback_data=f"adm:messages:{page-1}"))
+    total_pages = max(1, (total - 1) // MSGS_PER_PAGE + 1)
+    nav.append(types.InlineKeyboardButton(text=f"{page+1}/{total_pages}", callback_data="adm:noop"))
+    if offset + MSGS_PER_PAGE < total:
+        nav.append(types.InlineKeyboardButton(text="▶️", callback_data=f"adm:messages:{page+1}"))
+    if nav:
+        buttons.append(nav)
+    buttons.append([types.InlineKeyboardButton(text="🔙 Назад", callback_data="adm:main")])
+
+    unread_label = f" (🆕 {unread_count} непрочитанных)" if unread_count else ""
+    await callback.message.edit_text(
+        f"📨 <b>Сообщения{unread_label}</b>",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adm:msg:"))
+async def admin_view_message(callback: types.CallbackQuery, pool: asyncpg.Pool):
+    if not is_admin(callback.from_user.id):
+        return
+
+    msg_id = int(callback.data.split(":")[2])
+    rows = await pool.fetch("""
+        SELECT um.*, u.full_name, u.username, u.id AS user_id
+        FROM user_messages um
+        JOIN users u ON u.id = um.user_id
+        WHERE um.id = $1
+    """, msg_id)
+
+    if not rows:
+        await callback.answer("Сообщение не найдено", show_alert=True)
+        return
+
+    m = rows[0]
+    await mark_message_read(pool, msg_id)
+
+    uname = f"@{m['username']}" if m["username"] else m["full_name"]
+    date = m["created_at"].strftime("%d.%m.%Y %H:%M")
+    replied = f"\n↩️ Отвечено: {m['replied_at'].strftime('%d.%m %H:%M')}" if m["replied_at"] else ""
+
+    text = (
+        f"📨 <b>Сообщение #{m['id']}</b>\n\n"
+        f"👤 От: <b>{uname}</b> (ID: {m['user_id']})\n"
+        f"📅 {date}{replied}\n\n"
+        f"💬 {m['text']}"
+    )
+    await callback.message.edit_text(
+        text,
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(
+                text="↩️ Ответить",
+                callback_data=f"adm:reply:{m['id']}:{m['user_id']}"
+            )],
+            [types.InlineKeyboardButton(text="🔙 Назад", callback_data="adm:messages:0")],
+        ]),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adm:reply:"))
+async def admin_reply_start(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    parts = callback.data.split(":")
+    msg_id, user_id = int(parts[2]), int(parts[3])
+    await state.set_state(AdminReply.entering_text)
+    await state.update_data(msg_id=msg_id, user_id=user_id)
+    await callback.message.edit_text("✏️ Введите текст ответа пользователю:")
+    await callback.answer()
+
+
+@router.message(AdminReply.entering_text)
+async def admin_reply_send(message: types.Message, state: FSMContext, pool: asyncpg.Pool):
+    if not is_admin(message.from_user.id):
+        return
+    data = await state.get_data()
+    user_id = data["user_id"]
+    msg_id  = data["msg_id"]
+
+    try:
+        await message.bot.send_message(
+            user_id,
+            f"📨 <b>Ответ от администратора:</b>\n\n{message.text}",
+            parse_mode="HTML"
+        )
+        await mark_message_replied(pool, msg_id)
+        await message.answer(
+            "✅ Ответ отправлен.",
+            reply_markup=_admin_main_kb()
+        )
+    except Exception as e:
+        await message.answer(f"❌ Не удалось отправить: {e}", reply_markup=_admin_main_kb())
+
+    await state.clear()
+
+
+# ── Рассылка ─────────────────────────────────────────────────
+
+@router.callback_query(F.data == "adm:broadcast")
+async def admin_broadcast_start(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    await state.set_state(AdminBroadcast.entering_text)
+    await callback.message.edit_text(
+        "📢 <b>Рассылка</b>\n\n"
+        "Введите текст сообщения.\n"
+        "<i>Поддерживается HTML-разметка: <b>жирный</b>, <i>курсив</i>, <code>моноширинный</code></i>",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(AdminBroadcast.entering_text)
+async def admin_broadcast_preview(message: types.Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await state.update_data(text=message.text)
+    await message.answer(
+        f"<b>Предпросмотр:</b>\n\n{message.text}\n\n"
+        f"Отправить всем пользователям?",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="📢 Отправить",  callback_data="adm:broadcast_ok")],
+            [types.InlineKeyboardButton(text="❌ Отмена",     callback_data="adm:main")],
+        ]),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(AdminBroadcast.entering_text, F.data == "adm:broadcast_ok")
+async def admin_broadcast_send(callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool):
+    if not is_admin(callback.from_user.id):
+        return
+    data = await state.get_data()
+    text = data["text"]
+    user_ids = await get_all_user_ids(pool)
+
+    await callback.message.edit_text(f"⏳ Отправляем {len(user_ids)} пользователям...")
+
+    sent, failed = 0, 0
+    for uid in user_ids:
+        try:
+            await callback.bot.send_message(uid, text, parse_mode="HTML")
+            sent += 1
+        except Exception:
+            failed += 1
+
+    await state.clear()
+    await callback.message.edit_text(
+        f"✅ Рассылка завершена\n\n"
+        f"📤 Отправлено: <b>{sent}</b>\n"
+        f"❌ Ошибок: <b>{failed}</b>",
+        reply_markup=_back_kb("adm:main"),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
 # ── Клавиатуры ───────────────────────────────────────────────
 
 def _admin_main_kb() -> types.InlineKeyboardMarkup:
@@ -408,6 +609,8 @@ def _admin_main_kb() -> types.InlineKeyboardMarkup:
         [types.InlineKeyboardButton(text="📦 Все товары",      callback_data="adm:products")],
         [types.InlineKeyboardButton(text="➕ Добавить товар",   callback_data="adm:add_product")],
         [types.InlineKeyboardButton(text="🗂 Добавить категорию", callback_data="adm:add_category")],
+        [types.InlineKeyboardButton(text="📨 Сообщения",          callback_data="adm:messages:0")],
+        [types.InlineKeyboardButton(text="📢 Рассылка",            callback_data="adm:broadcast")],
     ])
 
 

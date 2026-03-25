@@ -11,7 +11,7 @@ from app.db.cache import cached_subcategories, cached_products
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🏪 Магазин")],
+            [KeyboardButton(text="🏪 Магазин"), KeyboardButton(text="🔍 Поиск")],
             [KeyboardButton(text="🛒 Корзина")],
             [KeyboardButton(text="👤 Личный кабинет")],
         ],
@@ -57,18 +57,44 @@ async def subcategory_or_items_menu(
 
 # ── Список товаров ───────────────────────────────────────────
 
-def items_menu(products: list, back_callback: str) -> InlineKeyboardMarkup:
+PAGE_SIZE = 8  # товаров на странице
+
+def items_menu(products: list, back_callback: str, page: int = 0) -> InlineKeyboardMarkup:
     """
-    Каждая кнопка товара кодирует back_callback внутри себя,
-    чтобы после «Добавить» знать куда вернуться.
+    Список товаров с пагинацией.
+    Каждая кнопка кодирует back_callback чтобы после «Добавить» знать куда вернуться.
     """
+    total = len(products)
+    start = page * PAGE_SIZE
+    end   = start + PAGE_SIZE
+    page_items = products[start:end]
+
     buttons = [
         [InlineKeyboardButton(
             text=f"{p['name']} — {p['price']} ₽",
             callback_data=f"item:{p['id']}:{back_callback}"
         )]
-        for p in products
+        for p in page_items
     ]
+
+    # Навигация по страницам
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(
+            text="◀️", callback_data=f"page:{back_callback}:{page - 1}"
+        ))
+    if total > 0:
+        nav.append(InlineKeyboardButton(
+            text=f"{page + 1}/{(total - 1) // PAGE_SIZE + 1}",
+            callback_data="noop"
+        ))
+    if end < total:
+        nav.append(InlineKeyboardButton(
+            text="▶️", callback_data=f"page:{back_callback}:{page + 1}"
+        ))
+    if nav:
+        buttons.append(nav)
+
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=back_callback)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

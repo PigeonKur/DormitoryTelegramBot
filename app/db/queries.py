@@ -415,3 +415,83 @@ def _slugify(name: str) -> str:
     slug = re.sub(r"[^a-zA-Zа-яА-Я0-9]+", "_", name).strip("_").lower()
     return slug or str(uuid.uuid4())[:8]
 
+
+# ════════════════════════════════════════════════════════════
+#  СООБЩЕНИЯ ПОЛЬЗОВАТЕЛЕЙ
+# ════════════════════════════════════════════════════════════
+
+async def save_user_message(pool: asyncpg.Pool, user_id: int, text: str) -> int:
+    row = await pool.fetchrow("""
+        INSERT INTO user_messages (user_id, text)
+        VALUES ($1, $2) RETURNING id
+    """, user_id, text)
+    return row["id"]
+
+
+async def get_unread_messages(pool: asyncpg.Pool) -> list[asyncpg.Record]:
+    return await pool.fetch("""
+        SELECT um.id, um.text, um.created_at,
+               u.full_name, u.username, u.id AS user_id
+        FROM user_messages um
+        JOIN users u ON u.id = um.user_id
+        WHERE um.is_read = FALSE
+        ORDER BY um.created_at DESC
+        LIMIT 30
+    """)
+
+
+async def get_all_messages(pool: asyncpg.Pool, offset: int = 0, limit: int = 10) -> list[asyncpg.Record]:
+    return await pool.fetch("""
+        SELECT um.id, um.text, um.created_at, um.is_read, um.replied_at,
+               u.full_name, u.username, u.id AS user_id
+        FROM user_messages um
+        JOIN users u ON u.id = um.user_id
+        ORDER BY um.created_at DESC
+        LIMIT $1 OFFSET $2
+    """, limit, offset)
+
+
+async def count_all_messages(pool: asyncpg.Pool) -> int:
+    return await pool.fetchval("SELECT COUNT(*) FROM user_messages")
+
+
+async def mark_message_read(pool: asyncpg.Pool, message_id: int) -> None:
+    await pool.execute(
+        "UPDATE user_messages SET is_read = TRUE WHERE id = $1", message_id
+    )
+
+
+async def mark_message_replied(pool: asyncpg.Pool, message_id: int) -> None:
+    await pool.execute("""
+        UPDATE user_messages SET is_read = TRUE, replied_at = NOW()
+        WHERE id = $1
+    """, message_id)
+
+
+# ════════════════════════════════════════════════════════════
+#  ПОИСК ТОВАРОВ
+# ════════════════════════════════════════════════════════════
+
+async def search_products(pool: asyncpg.Pool, query: str) -> list[asyncpg.Record]:
+    """Полнотекстовый поиск по названию товара (регистронезависимый)."""
+    return await pool.fetch("""
+        SELECT p.id, p.name, p.price, p.in_stock,
+               c.name AS category_name, c.id AS category_id,
+               c.parent_id
+        FROM products p
+        JOIN categories c ON c.id = p.category_id
+        WHERE p.in_stock = TRUE
+          AND p.name ILIKE $1
+        ORDER BY p.name
+        LIMIT 20
+    """, f"%{query}%")
+
+
+# ════════════════════════════════════════════════════════════
+#  РАССЫЛКА
+# ════════════════════════════════════════════════════════════
+
+async def get_all_user_ids(pool: asyncpg.Pool) -> list[int]:
+    rows = await pool.fetch("SELECT id FROM users")
+    return [r["id"] for r in rows]
+

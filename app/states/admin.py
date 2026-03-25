@@ -14,3 +14,10 @@ class AdminEditProduct(StatesGroup):
 class AdminAddCategory(StatesGroup):
     entering_name     = State()
     choosing_parent   = State()   # родительская категория или "нет"
+
+
+class AdminReply(StatesGroup):
+    entering_text = State()
+
+class AdminBroadcast(StatesGroup):
+    entering_text = State()
