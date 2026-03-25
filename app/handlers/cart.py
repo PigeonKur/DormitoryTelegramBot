@@ -3,9 +3,11 @@ from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from app.keyboards.main import cart_menu, delivery_menu, order_confirm_menu
 from app.db.queries import (
-    get_product, create_order, get_user,
-    set_delivery_type, update_order_status
+    get_product, get_user, set_delivery_type, update_order_status,
+    cart_add_item, cart_get_items, cart_change_qty, cart_delete_item,
+    cart_clear, create_order, process_referral_reward,
 )
+from app.db.cache import cached_root_categories, cached_category, cached_products
 from app.states.cart import CartFlow
 
 router = Router()
@@ -15,79 +17,67 @@ DELIVERY_LABELS = {
     "door": "🚪 Оставить у двери",
 }
 
+
 # ── Вспомогательные функции ──────────────────────────────────
 
-async def get_cart(state: FSMContext) -> dict:
-    """Корзина в FSM: {product_id(str): quantity(int)}"""
-    data = await state.get_data()
-    return data.get("cart", {})
-
-async def save_cart(state: FSMContext, cart: dict):
-    await state.update_data(cart=cart)
-
-async def format_cart_text(cart: dict, pool: asyncpg.Pool) -> str:
-    if not cart:
-        return "🛒 Ваша корзина пуста."
+async def format_cart_text(user_id: int, pool: asyncpg.Pool) -> tuple[str, int]:
+    """Возвращает (текст корзины, итоговая сумма)."""
+    rows = await cart_get_items(pool, user_id)
+    if not rows:
+        return "🛒 Ваша корзина пуста.", 0
 
     lines = ["🛒 <b>Ваша корзина:</b>\n"]
     total = 0
-    for pid_str, qty in cart.items():
-        item = await get_product(pool, int(pid_str))
-        if not item:
+    for r in rows:
+        if not r["in_stock"]:
+            lines.append(f"• ~~{r['name']}~~ — нет в наличии")
             continue
-        subtotal = item["price"] * qty
+        subtotal = r["price"] * r["quantity"]
         total += subtotal
-        lines.append(f"• {item['name']} × {qty} = <b>{subtotal} ₽</b>")
+        lines.append(f"• {r['name']} × {r['quantity']} = <b>{subtotal} ₽</b>")
 
     lines.append(f"\n💰 <b>Итого: {total} ₽</b>")
-    return "\n".join(lines)
+    return "\n".join(lines), total
 
 
 # ── Добавить в корзину ───────────────────────────────────────
 
 @router.callback_query(F.data.startswith("add:"))
-async def add_to_cart(callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool):
-    parts = callback.data.split(":")   # add:<product_id>:<back_callback>
+async def add_to_cart(callback: types.CallbackQuery, pool: asyncpg.Pool):
+    parts = callback.data.split(":")
     product_id = int(parts[1])
-    back_cb = parts[2] if len(parts) > 2 else "to_catalog"
+    back_cb = ":".join(parts[2:]) if len(parts) > 2 else "to_catalog"
 
     item = await get_product(pool, product_id)
     if not item:
         await callback.answer("Товар не найден", show_alert=True)
         return
 
-    cart = await get_cart(state)
-    pid_str = str(product_id)
-    cart[pid_str] = cart.get(pid_str, 0) + 1
-    await save_cart(state, cart)
+    qty = await cart_add_item(pool, callback.from_user.id, product_id)
+    await callback.answer(f"✅ «{item['name']}» в корзине (×{qty})")
 
-    qty = cart[pid_str]
-    await callback.answer(f"✅ «{item['name']}» добавлен в корзину (×{qty})")
+    # Возвращаемся назад к списку товаров
+    from app.keyboards.main import items_menu, catalog_menu
 
-    # ── Фикс: возвращаемся назад к списку товаров ──
-    from app.db.queries import get_category, get_products
-    from app.keyboards.main import items_menu, subcategory_or_items_menu
-
-    # back_cb может быть: "to_catalog", "cat:5", "sub:3:7"
     if back_cb == "to_catalog":
-        from app.db.queries import get_root_categories
-        from app.keyboards.main import catalog_menu
-        cats = await get_root_categories(pool)
-        await callback.message.edit_text("🏪 Выберите категорию:", reply_markup=catalog_menu(cats))
-
+        cats = await cached_root_categories(pool)
+        await callback.message.edit_text(
+            "🏪 Выберите категорию:",
+            reply_markup=catalog_menu(cats)
+        )
     elif back_cb.startswith("cat:"):
         cat_id = int(back_cb.split(":")[1])
-        cat = await get_category(pool, cat_id)
-        products = await get_products(pool, cat_id)
+        cat = await cached_category(pool, cat_id)
+        products = await cached_products(pool, cat_id)
         await callback.message.edit_text(
             f"{cat['name']}\n\nВыберите товар:",
             reply_markup=items_menu(products, back_callback="to_catalog")
         )
-
     elif back_cb.startswith("sub:"):
-        _, cat_id_str, sub_id_str = back_cb.split(":")
-        sub = await get_category(pool, int(sub_id_str))
-        products = await get_products(pool, int(sub_id_str))
+        sub_parts = back_cb.split(":")
+        cat_id_str, sub_id_str = sub_parts[1], sub_parts[2]
+        sub = await cached_category(pool, int(sub_id_str))
+        products = await cached_products(pool, int(sub_id_str))
         await callback.message.edit_text(
             f"{sub['name']}\n\nВыберите товар:",
             reply_markup=items_menu(products, back_callback=f"cat:{cat_id_str}")
@@ -97,44 +87,44 @@ async def add_to_cart(callback: types.CallbackQuery, state: FSMContext, pool: as
 # ── Просмотр корзины ─────────────────────────────────────────
 
 @router.message(F.text == "🛒 Корзина")
-async def view_cart(message: types.Message, state: FSMContext, pool: asyncpg.Pool):
-    cart = await get_cart(state)
-    text = await format_cart_text(cart, pool)
-    await message.answer(text, reply_markup=cart_menu(has_items=bool(cart)), parse_mode="HTML")
+async def view_cart(message: types.Message, pool: asyncpg.Pool):
+    text, total = await format_cart_text(message.from_user.id, pool)
+    await message.answer(text, reply_markup=cart_menu(has_items=total > 0), parse_mode="HTML")
 
 
 # ── Изменить количество ──────────────────────────────────────
 
 @router.callback_query(F.data.startswith("qty:"))
-async def change_qty(callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool):
+async def change_qty(callback: types.CallbackQuery, pool: asyncpg.Pool):
     _, action, pid_str = callback.data.split(":")
-    cart = await get_cart(state)
-
-    if pid_str not in cart:
-        await callback.answer("Товар не найден в корзине", show_alert=True)
-        return
+    product_id = int(pid_str)
+    user_id = callback.from_user.id
 
     if action == "inc":
-        cart[pid_str] += 1
+        await cart_change_qty(pool, user_id, product_id, +1)
     elif action == "dec":
-        cart[pid_str] -= 1
-        if cart[pid_str] <= 0:
-            del cart[pid_str]
+        await cart_change_qty(pool, user_id, product_id, -1)
     elif action == "del":
-        del cart[pid_str]
+        await cart_delete_item(pool, user_id, product_id)
 
-    await save_cart(state, cart)
-    text = await format_cart_text(cart, pool)
-    await callback.message.edit_text(text, reply_markup=cart_menu(has_items=bool(cart)), parse_mode="HTML")
+    text, total = await format_cart_text(user_id, pool)
+    await callback.message.edit_text(
+        text,
+        reply_markup=cart_menu(has_items=total > 0),
+        parse_mode="HTML"
+    )
     await callback.answer()
 
 
 # ── Очистить корзину ─────────────────────────────────────────
 
 @router.callback_query(F.data == "cart:clear")
-async def clear_cart(callback: types.CallbackQuery, state: FSMContext):
-    await save_cart(state, {})
-    await callback.message.edit_text("🗑 Корзина очищена.", reply_markup=cart_menu(has_items=False))
+async def clear_cart(callback: types.CallbackQuery, pool: asyncpg.Pool):
+    await cart_clear(pool, callback.from_user.id)
+    await callback.message.edit_text(
+        "🗑 Корзина очищена.",
+        reply_markup=cart_menu(has_items=False)
+    )
     await callback.answer()
 
 
@@ -142,8 +132,8 @@ async def clear_cart(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "cart:checkout")
 async def checkout_start(callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool):
-    cart = await get_cart(state)
-    if not cart:
+    rows = await cart_get_items(pool, callback.from_user.id)
+    if not rows:
         await callback.answer("Корзина пуста!", show_alert=True)
         return
 
@@ -151,7 +141,7 @@ async def checkout_start(callback: types.CallbackQuery, state: FSMContext, pool:
     saved_delivery = user["delivery_type"] if user else None
 
     if saved_delivery:
-        await show_order_summary(callback, state, pool, saved_delivery)
+        await _show_order_summary(callback, state, pool, saved_delivery)
     else:
         await state.set_state(CartFlow.choosing_delivery)
         await callback.message.edit_text(
@@ -166,33 +156,38 @@ async def checkout_start(callback: types.CallbackQuery, state: FSMContext, pool:
 @router.callback_query(CartFlow.choosing_delivery, F.data.startswith("delivery:"))
 async def delivery_chosen(callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool):
     delivery_type = callback.data.split(":")[1]
-    # Сохраняем выбор в БД
     await set_delivery_type(pool, callback.from_user.id, delivery_type)
-    await show_order_summary(callback, state, pool, delivery_type)
+    await _show_order_summary(callback, state, pool, delivery_type)
     await callback.answer()
 
 
-# Смена доставки из профиля
+# Смена доставки из профиля (без активного состояния)
 @router.callback_query(F.data.startswith("delivery:"))
 async def delivery_from_profile(callback: types.CallbackQuery, pool: asyncpg.Pool):
     delivery_type = callback.data.split(":")[1]
     await set_delivery_type(pool, callback.from_user.id, delivery_type)
     label = DELIVERY_LABELS.get(delivery_type, delivery_type)
-    await callback.message.edit_text(f"✅ Тип доставки изменён: <b>{label}</b>", parse_mode="HTML")
+    await callback.message.edit_text(
+        f"✅ Тип доставки изменён: <b>{label}</b>",
+        parse_mode="HTML"
+    )
     await callback.answer()
 
 
 # ── Оформление: шаг 2 — итоговая форма ──────────────────────
 
-async def show_order_summary(
+async def _show_order_summary(
     callback: types.CallbackQuery,
     state: FSMContext,
     pool: asyncpg.Pool,
     delivery_type: str,
 ):
-    cart = await get_cart(state)
     label = DELIVERY_LABELS.get(delivery_type, delivery_type)
-    cart_text = await format_cart_text(cart, pool)
+    cart_text, total = await format_cart_text(callback.from_user.id, pool)
+
+    if total == 0:
+        await callback.answer("Все товары закончились!", show_alert=True)
+        return
 
     text = (
         f"{cart_text}\n\n"
@@ -219,11 +214,12 @@ async def change_delivery(callback: types.CallbackQuery, state: FSMContext):
 # ── Оформление: отмена ───────────────────────────────────────
 
 @router.callback_query(CartFlow.reviewing, F.data == "order:cancel")
-async def cancel_order(callback: types.CallbackQuery, state: FSMContext):
+async def cancel_order(callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool):
     await state.set_state(None)
+    rows = await cart_get_items(pool, callback.from_user.id)
     await callback.message.edit_text(
         "❌ Заказ отменён. Корзина сохранена.",
-        reply_markup=cart_menu(has_items=True)
+        reply_markup=cart_menu(has_items=bool(rows))
     )
     await callback.answer()
 
@@ -232,38 +228,61 @@ async def cancel_order(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(CartFlow.reviewing, F.data == "order:pay")
 async def pay_order(callback: types.CallbackQuery, state: FSMContext, pool: asyncpg.Pool):
-    cart = await get_cart(state)
+    user_id = callback.from_user.id
+    rows = await cart_get_items(pool, user_id)
     data = await state.get_data()
     delivery_type = data.get("delivery_type", "hand")
 
-    # Собираем позиции и считаем итог
+    if not rows:
+        await callback.answer("Корзина пуста!", show_alert=True)
+        return
+
+    # Собираем позиции только из товаров в наличии
     items = []
     total = 0
-    for pid_str, qty in cart.items():
-        item = await get_product(pool, int(pid_str))
-        if not item:
+    for r in rows:
+        if not r["in_stock"]:
             continue
-        subtotal = item["price"] * qty
+        subtotal = r["price"] * r["quantity"]
         total += subtotal
         items.append({
-            "product_id": item["id"],
-            "name": item["name"],
-            "price": item["price"],
-            "quantity": qty,
+            "product_id": r["product_id"],
+            "name":       r["name"],
+            "price":      r["price"],
+            "quantity":   r["quantity"],
         })
 
     # Создаём заказ в БД
     order_id = await create_order(
         pool=pool,
-        user_id=callback.from_user.id,
+        user_id=user_id,
         delivery_type=delivery_type,
         total_price=total,
         items=items,
     )
     await update_order_status(pool, order_id, "paid")
 
-    # Очищаем корзину
-    await save_cart(state, {})
+    # Реферальное начисление
+    referrer_id = await process_referral_reward(
+        pool=pool,
+        referee_id=user_id,
+        order_id=order_id,
+        order_total=total,
+    )
+    if referrer_id:
+        bonus = max(1, total * 10 // 100)
+        try:
+            await callback.bot.send_message(
+                referrer_id,
+                f"💰 Вам начислено <b>{bonus} ₽</b> бонусами — "
+                f"ваш реферал сделал заказ на {total} ₽!",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+
+    # Очищаем корзину в БД и сбрасываем состояние
+    await cart_clear(pool, user_id)
     await state.set_state(None)
 
     label = DELIVERY_LABELS.get(delivery_type, delivery_type)

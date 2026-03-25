@@ -5,7 +5,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import BOT_TOKEN
 from app.db.connection import create_pool, close_pool
-from app.handlers import start, common, cart
+from app.handlers import start, common, cart, profile, admin
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,6 +31,8 @@ async def main():
     dp.include_router(start.router)
     dp.include_router(common.router)
     dp.include_router(cart.router)
+    dp.include_router(profile.router)
+    dp.include_router(admin.router)
 
     log.info("✅ Бот запущен")
     try:
@@ -42,5 +44,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-# все работает идем к следующему шагу. Только в категории напитки, после добавления товара в корзину, не переносит обратно. В остальных категориях переносит. Надо пофиксить напитки.

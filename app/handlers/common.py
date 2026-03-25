@@ -2,10 +2,9 @@ import asyncpg
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from app.keyboards.main import (
-    catalog_menu, subcategory_or_items_menu, items_menu,
-    item_card_menu, profile_menu
+    catalog_menu, subcategory_or_items_menu, items_menu, item_card_menu
 )
-from app.db.queries import get_product, get_user, get_user_orders
+from app.db.queries import get_product
 from app.db.cache import (
     cached_root_categories, cached_subcategories,
     cached_products, cached_category
@@ -25,56 +24,6 @@ DELIVERY_LABELS = {
 async def shop_handler(message: types.Message, pool: asyncpg.Pool):
     cats = await cached_root_categories(pool)
     await message.answer("🏪 Выберите категорию:", reply_markup=catalog_menu(cats))
-
-
-# ── Личный кабинет ───────────────────────────────────────────
-
-@router.message(F.text == "👤 Личный кабинет")
-async def profile_handler(message: types.Message, pool: asyncpg.Pool):
-    user = await get_user(pool, message.from_user.id)
-    delivery = DELIVERY_LABELS.get(user["delivery_type"], "—") if user else "—"
-    room = user["room_number"] or "не указан" if user else "—"
-
-    text = (
-        f"👤 <b>Личный кабинет</b>\n\n"
-        f"🚚 Тип доставки: <b>{delivery}</b>\n"
-        f"📍 Номер комнаты: <b>{room}</b>"
-    )
-    await message.answer(text, reply_markup=profile_menu(), parse_mode="HTML")
-
-
-@router.callback_query(F.data.startswith("profile:"))
-async def profile_callback(callback: types.CallbackQuery, pool: asyncpg.Pool):
-    action = callback.data.split(":")[1]
-
-    if action == "orders":
-        orders = await get_user_orders(pool, callback.from_user.id)
-        if not orders:
-            await callback.message.edit_text("📦 Заказов пока нет.")
-        else:
-            lines = ["📦 <b>Последние заказы:</b>\n"]
-            for o in orders:
-                date = o["created_at"].strftime("%d.%m.%Y %H:%M")
-                status_icon = {"pending": "⏳", "paid": "✅", "cancelled": "❌"}.get(o["status"], "❓")
-                lines.append(f"{status_icon} №{o['id']} — {o['total_price']} ₽ ({date})")
-            await callback.message.edit_text("\n".join(lines), parse_mode="HTML")
-
-    elif action == "delivery":
-        from app.keyboards.main import delivery_menu
-        await callback.message.edit_text(
-            "🚚 Выберите тип доставки по умолчанию:",
-            reply_markup=delivery_menu(from_profile=True)
-        )
-    elif action == "room":
-        await callback.message.edit_text(
-            "📍 Введите номер вашей комнаты (например: <b>214</b>):",
-            parse_mode="HTML"
-        )
-        from app.states.cart import CartFlow
-        # Используем отдельное состояние для ввода комнаты
-        # (добавим в states/cart.py)
-
-    await callback.answer()
 
 
 # ── Навигация по каталогу ────────────────────────────────────

@@ -128,5 +128,14 @@ def profile_menu() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="📦 Мои заказы",           callback_data="profile:orders")],
             [InlineKeyboardButton(text="🚚 Тип доставки",         callback_data="profile:delivery")],
             [InlineKeyboardButton(text="📍 Номер комнаты",        callback_data="profile:room")],
+            [InlineKeyboardButton(text="👥 Реферальная программа",callback_data="profile:referral")],
+        ]
+    )
+
+
+def profile_referral_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="profile:back")],
         ]
     )
