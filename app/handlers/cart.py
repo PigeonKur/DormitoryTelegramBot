@@ -56,32 +56,13 @@ async def add_to_cart(callback: types.CallbackQuery, pool: asyncpg.Pool):
     qty = await cart_add_item(pool, callback.from_user.id, product_id)
     await callback.answer(f"✅ «{item['name']}» в корзине (×{qty})")
 
-    # Возвращаемся назад к списку товаров
-    from app.keyboards.main import items_menu, catalog_menu
-
-    if back_cb == "to_catalog":
-        cats = await cached_root_categories(pool)
-        await callback.message.edit_text(
-            "🏪 Выберите категорию:",
-            reply_markup=catalog_menu(cats)
-        )
-    elif back_cb.startswith("cat:"):
-        cat_id = int(back_cb.split(":")[1])
-        cat = await cached_category(pool, cat_id)
-        products = await cached_products(pool, cat_id)
-        await callback.message.edit_text(
-            f"{cat['name']}\n\nВыберите товар:",
-            reply_markup=items_menu(products, back_callback="to_catalog")
-        )
-    elif back_cb.startswith("sub:"):
-        sub_parts = back_cb.split(":")
-        cat_id_str, sub_id_str = sub_parts[1], sub_parts[2]
-        sub = await cached_category(pool, int(sub_id_str))
-        products = await cached_products(pool, int(sub_id_str))
-        await callback.message.edit_text(
-            f"{sub['name']}\n\nВыберите товар:",
-            reply_markup=items_menu(products, back_callback=f"cat:{cat_id_str}")
-        )
+    # После добавления всегда возвращаемся в главный каталог
+    from app.keyboards.main import catalog_menu
+    cats = await cached_root_categories(pool)
+    await callback.message.edit_text(
+        "🏪 Выберите категорию:",
+        reply_markup=catalog_menu(cats)
+    )
 
 
 # ── Просмотр корзины ─────────────────────────────────────────
